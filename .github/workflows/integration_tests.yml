@@ -1,0 +1,76 @@
+name: GitHub PDB CI Demo
+run-name: ${{ github.actor }} is testing out the GitHub PDB CI Demo 🚀
+on: [push]
+
+env: 
+  CDB_PASS:  ${{ secrets.CDB_PASS }}
+  CDB_HOST:  ${{ secrets.CDB_HOST }}
+  CDB_PORT:  ${{ secrets.CDB_PORT }}
+  CDB_NAME:  ${{ secrets.CDB_NAME }}
+  DB_DOMAIN: ${{ secrets.DB_DOMAIN }}
+  PDB_NAME:  P${{ github.run_number }} # Unique PDB for each run
+
+jobs:
+  Create-PDB:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/oracle/oraclelinux8-instantclient:21
+    steps:
+      - run: |-
+          sqlplus -S /nolog <<-EOF
+            conn SYS/$CDB_PASS@//$CDB_HOST:$CDB_PORT/$CDB_NAME$DB_DOMAIN AS SYSDBA
+            WHENEVER SQLERROR EXIT FAILURE
+            create pluggable database $PDB_NAME ADMIN USER PDBADMIN 
+              IDENTIFIED BY "$CDB_PASS" 
+              ROLES = (dba,resource);
+            alter pluggable database $PDB_NAME OPEN;
+            alter session set container=$PDB_NAME;
+            BEGIN
+              -- If we are TDE; Set the KEY (bit hacky but you get the point)
+              FOR X IN (SELECT DISTINCT(ERROR_NUMBER) 
+                          FROM PDB_PLUG_IN_VIOLATIONS 
+                         WHERE ERROR_NUMBER='28427')
+              LOOP
+                execute immediate 'ADMINISTER KEY MANAGEMENT SET KEY FORCE KEYSTORE IDENTIFIED BY "$CDB_PASS" WITH BACKUP';
+              END LOOP;
+            END;
+            /
+            show pdbs;
+          EOF
+          exit $?
+
+  ############################################################################
+  # This is where the magic happens; run integration tests in this block
+  ############################################################################
+  Run-DB-Test:
+    name: CI Tests
+    runs-on: ubuntu-latest
+    needs: Create-PDB
+    container:
+      image: ghcr.io/oracle/oraclelinux8-instantclient:21
+    steps:
+      - run: |-
+          sqlplus -S /nolog <<-EOF
+            conn PDBADMIN/$CDB_PASS@//$CDB_HOST:$CDB_PORT/$PDB_NAME$DB_DOMAIN
+            WHENEVER SQLERROR EXIT FAILURE
+            SELECT sys_context('USERENV', 'DB_NAME') FROM dual;
+          EOF
+          exit $?
+  ############################################################################
+
+  Destroy-PDB:
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs: [Create-PDB, Run-DB-Test]
+    container:
+      image: ghcr.io/oracle/oraclelinux8-instantclient:21
+    steps:
+      - run: |-
+          sqlplus -S /nolog <<-EOF
+            conn SYS/$CDB_PASS@//$CDB_HOST:$CDB_PORT/$CDB_NAME$DB_DOMAIN AS SYSDBA
+            WHENEVER SQLERROR EXIT FAILURE
+            alter pluggable database $PDB_NAME CLOSE IMMEDIATE;
+            drop pluggable database $PDB_NAME including datafiles;
+            show pdbs;
+          EOF
+          exit $?

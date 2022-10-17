@@ -1,0 +1,3 @@
+# Slim container for running SQL*Plus (AMD compatible)
+FROM ghcr.io/oracle/oraclelinux8-instantclient:21
+ENTRYPOINT ["/usr/bin/sqlplus"]
