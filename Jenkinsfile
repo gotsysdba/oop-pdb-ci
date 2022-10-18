@@ -34,15 +34,9 @@ pipeline {
                     ADMINISTER KEY MANAGEMENT SET KEY FORCE KEYSTORE IDENTIFIED BY "$CDB_PASS" WITH BACKUP;
                     show pdbs;
                 EOF
-                echo "$PDB_NAME is Ready; testing resolution and connectivity"
-                echo "$PDB_NAME = $PDB_CONN" > $TNS_ADMIN/tnsnames.ora
-                sqlplus PDBADMIN/$CDB_PASS@$PDB_NAME <<-EOP
+                sqlplus -S /nolog <<-EOP
+                    conn PDBADMIN/$CDB_PASS@//$CDB_HOST:$CDB_PORT/$PDB_NAME$DB_DOMAIN
                     SELECT sys_context('USERENV', 'DB_NAME') FROM dual;
-                    CREATE TABLESPACE PARSE DATAFILE SIZE 250M AUTOEXTEND ON NEXT 250M;
-                    ALTER USER PDBADMIN DEFAULT TABLESPACE PARSE;
-                    ALTER USER PDBADMIN QUOTA UNLIMITED ON PARSE;
-                    ALTER TABLESPACE SYSAUX ADD DATAFILE SIZE 1G;
-                    ALTER TABLESPACE UNDOTBS1 ADD DATAFILE SIZE 1G;
                 EOP
                 exit $?
                 '''.stripIndent()
@@ -67,13 +61,13 @@ pipeline {
         always {
             sh '''\
             #!/bin/env bash
-            echo "Dropping $PDB_NAME"
-            sqlplus SYS/$CDB_PASS@$CDB_CONN AS SYSDBA <<-EOF
+            sqlplus -S /nolog <<-EOF
+                conn SYS/$CDB_PASS@//$CDB_HOST:$CDB_PORT/$CDB_NAME$DB_DOMAIN AS SYSDBA
                 alter pluggable database $PDB_NAME CLOSE IMMEDIATE;
                 drop pluggable database $PDB_NAME including datafiles;
                 show pdbs;
             EOF
-            echo "$PDB_NAME Dropped"
+            exit $?
             '''.stripIndent()
         }
     }
